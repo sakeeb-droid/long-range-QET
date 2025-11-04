@@ -129,7 +129,7 @@ class LongRangeQETCircuit(MinimalQETCircuit):
 
         with self.qc.if_test((self.creg_qet[0], 0)):
             self.qc.ry(2*self.phi, self.qreg[1])
-        with self.qc.if_test((self.creg_qet[1], 1)):
+        with self.qc.if_test((self.creg_qet[0], 1)):
             self.qc.ry(-2*self.phi, self.qreg[1])
 
         if self.v_measure:
