@@ -5,13 +5,16 @@ from qiskit.quantum_info import SparsePauliOp
 from qiskit_ibm_runtime import QiskitRuntimeService, SamplerV2 as Sampler, EstimatorV2 as Estimator
 
 from qiskit_aer import AerSimulator
+
 import numpy as np
 
 class MinimalQETCircuit:
-    def __init__(self, h, k, v_measure=False):
+    def __init__(self, h, k, v_measure=False, dynamical_decoupling=False, pauli_twirl=False, depth = 4):
         self.h = h
         self.k = k
         self.v_measure = v_measure
+        self.dynamical_decoupling = dynamical_decoupling
+        self.pauli_twirl = pauli_twirl
         self.alpha = -np.arcsin((1/np.sqrt(2))*(np.sqrt(1+h/np.sqrt(h**2+k**2))))
         self.phi = 0.5*np.arcsin((h*k)/np.sqrt((h**2+2*k**2)**2+(h*k)**2))
         self.qreg = QuantumRegister(2, 'q')
@@ -21,6 +24,7 @@ class MinimalQETCircuit:
     def build_circuit(self):
         self.qc.ry(2*self.alpha, self.qreg[0])
         self.qc.cx(self.qreg[0], self.qreg[1])
+
         self.qc.h(self.qreg[0])
         self.qc.measure(self.qreg[0], self.creg[0])
 
@@ -33,6 +37,7 @@ class MinimalQETCircuit:
             self.qc.h(self.qreg[1])
         
         self.qc.measure(self.qreg[1], self.creg[1])
+            
 
     def get_circuit(self):
         return self.qc
@@ -46,6 +51,13 @@ class MinimalQETCircuit:
         self.optimization_level = optimization_level
 
         sampler = Sampler(mode=self.backend)
+
+        # if self.dynamical_decoupling:
+        #     sampler.options.dynamical_decoupling.enable = True
+        #     sampler.options.dynamical_decoupling.sequence_type = 'XY4'
+        # if self.pauli_twirl:
+        #     sampler.options.twirling.enable_gates = True
+
         pm = generate_preset_pass_manager(self.optimization_level, self.backend)
         job = sampler.run(pm.run([self.qc]), shots=self.shots)
         counts = job.result()
@@ -125,6 +137,9 @@ class LongRangeQETCircuit(MinimalQETCircuit):
         self.qc.cx(self.qreg[0], self.qreg[1])
         self.qc.h(self.qreg[0])
 
+        self.qc.h(self.qreg[2])
+        self.qc.cx(self.qreg[2], self.qreg[3])
+
         self.qc.measure(self.qreg[0], self.creg_qet[0])
 
         with self.qc.if_test((self.creg_qet[0], 0)):
@@ -132,22 +147,24 @@ class LongRangeQETCircuit(MinimalQETCircuit):
         with self.qc.if_test((self.creg_qet[0], 1)):
             self.qc.ry(-2*self.phi, self.qreg[1])
 
-        if self.v_measure:
-            self.qc.h(self.qreg[1])
-
         self.qc.barrier()
 
-        self.qc.h(self.qreg[2])
-        self.qc.cx(self.qreg[2], self.qreg[3])
         self.qc.cx(self.qreg[1], self.qreg[2])
         self.qc.h(self.qreg[1])
+        # self.qc.cx(self.qreg[2], self.qreg[3])
+        # self.qc.cz(self.qreg[1], self.qreg[3])
         self.qc.measure(self.qreg[1], self.creg_qt[0])
         self.qc.measure(self.qreg[2], self.creg_qt[1])
+
         with self.qc.if_test((self.creg_qt[0], 1)):
             self.qc.z(self.qreg[3])
         with self.qc.if_test((self.creg_qt[1], 1)):
             self.qc.x(self.qreg[3])
+
         self.qc.barrier()
+
+        if self.v_measure:
+            self.qc.h(self.qreg[3])
 
         
         self.qc.measure(self.qreg[3], self.creg_qet[1])
@@ -158,8 +175,79 @@ class LongRangeQETCircuit(MinimalQETCircuit):
         self.optimization_level = optimization_level
 
         sampler = Sampler(mode=self.backend)
+        # if self.dynamical_decoupling:
+        #     sampler.options.dynamical_decoupling.enable = True
+        #     sampler.options.dynamical_decoupling.sequence_type = 'XY4'
+        # if self.pauli_twirl:
+        #     sampler.options.twirling.enable_gates = True
         pm = generate_preset_pass_manager(self.optimization_level, self.backend)
         job = sampler.run(pm.run([self.qc]), shots=self.shots)
         counts = job.result()
 
         return counts[0].data.c_qet.get_counts()
+    
+class LongRangeQETCircuitStatic(LongRangeQETCircuit):
+    def __init__(self, h, k, v_measure=False, dynamical_decoupling=False, pauli_twirl=False):
+        self.h = h
+        self.k = k
+        self.v_measure = v_measure
+        self.dynamical_decoupling = dynamical_decoupling
+        self.pauli_twirl = pauli_twirl
+        self.alpha = -np.arcsin((1/np.sqrt(2))*(np.sqrt(1+h/np.sqrt(h**2+k**2))))
+        self.phi = 0.5*np.arcsin((h*k)/np.sqrt((h**2+2*k**2)**2+(h*k)**2))
+        self.qreg = QuantumRegister(4, 'q')
+        self.creg = ClassicalRegister(2, 'c')
+        self.qc = QuantumCircuit(self.qreg, self.creg)
+
+    def build_circuit(self):
+        self.qc.ry(2*self.alpha, self.qreg[0])
+        self.qc.cx(self.qreg[0], self.qreg[1])
+        self.qc.h(self.qreg[0])
+
+        self.qc.cry(-2*self.phi, self.qreg[0], self.qreg[1])
+        self.qc.x(self.qreg[0])
+        self.qc.cry(2*self.phi, self.qreg[0], self.qreg[1])
+        self.qc.x(self.qreg[0])
+
+        self.qc.h(self.qreg[2])
+        self.qc.cx(self.qreg[2], self.qreg[3])
+        self.qc.barrier()
+
+        self.qc.cx(self.qreg[1], self.qreg[2])
+        self.qc.h(self.qreg[1])
+        self.qc.cx(self.qreg[2], self.qreg[3])
+        self.qc.cz(self.qreg[1], self.qreg[3])
+
+        self.qc.barrier()
+
+        if self.v_measure:
+            self.qc.h(self.qreg[3])
+
+        self.qc.measure(self.qreg[0], self.creg[0])
+        self.qc.measure(self.qreg[3], self.creg[1])
+
+    def get_counts(self, backend, shots=1024, optimization_level=1, sequence_type='XY4'):
+        self.backend = backend
+        self.shots = shots
+        self.optimization_level = optimization_level
+        self.sequence_type = sequence_type
+
+        sampler = Sampler(mode=self.backend)
+
+        if self.dynamical_decoupling:
+            sampler.options.dynamical_decoupling.enable = True
+            sampler.options.dynamical_decoupling.sequence_type = 'XY4'
+        if self.pauli_twirl:
+            sampler.options.twirling.enable_gates = True
+
+        pm = generate_preset_pass_manager(self.optimization_level, self.backend)
+        job = sampler.run(pm.run([self.qc]), shots=self.shots)
+        counts = job.result()
+
+        return counts[0].data.c.get_counts()
+
+
+
+
+
+
